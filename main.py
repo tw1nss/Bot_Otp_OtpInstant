@@ -5,6 +5,7 @@ import time
 import threading
 import sys
 import os
+from flask import Flask
 
 # ==============================================================================
 # --- 0. ANIMASI LOADING TERMINAL SAAT RUNNING ---
@@ -20,13 +21,13 @@ def loading_terminal_animation():
         "Injecting Database Cache Memory Thread...",
         "Synchronizing Telegram Command Shortcuts...",
         "Configuring Category-Based Price Monitor...",
-        "Injecting Manual Notification Test Route..."
+        "Injecting Flask Web Server Dummy Route..."
     ]
     
     for step in steps:
         sys.stdout.write(f"⚙️ {step:<45}")
         sys.stdout.flush()
-        time.sleep(0.1)  # Dipercepat untuk lingkungan cloud production
+        time.sleep(0.1)
         sys.stdout.write("[ DONE ]\n")
         sys.stdout.flush()
         
@@ -40,7 +41,7 @@ loading_terminal_animation()
 # --- 1. KONFIGURASI UTAMA (SECURE ENVIRONMENT VERSION) ---
 # ==============================================================================
 
-# Mengambil config sensitif dari Environment Variables Render (Lebih Aman!)
+# Mengambil config sensitif dari Environment Variables Render (Sangat Aman)
 API_KEY = os.environ.get('OTP_API_KEY', 'otpk_b66f75f84a1112179214e8e13f5e0cf3420412274dd4134c') 
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8628365839:AAHthtJUEi70gYjsfBjs1iLzKu4n3PLeu0w')  
 ADMIN_CHAT_ID = int(os.environ.get('ADMIN_CHAT_ID', 5902757286))
@@ -68,7 +69,7 @@ cache_lock = threading.Lock()
 FLAG_MAPPING = {
     'indonesia': '🇮🇩', 'malaysia': '🇲🇾', 'philippines': '🇵🇭', 'thailand': '🇹🇭',
     'vietnam': '🇻🇳', 'south africa': '🇿🇦', 'cambodia': '🇰🇭', 'myanmar': '🇲🇲',
-    'laos': '🇱🇦', 'india': '🇮🇳', 'russia': '🇷🇺', 'united states': '🇺🇸',
+    'laos': '🇱🇦', 'india': '🇮🇳', 'russia': '🇺🇺', 'united states': '🇺🇸',
     'china': '🇨🇳', 'brazil': '🇧🇷', 'mexico': '🇲🇽', 'colombia': '🇨🇴',
     'egypt': '🇪🇬', 'nigeria': '🇳🇬', 'england': '🇬🇧', 'united kingdom': '🇬🇧'
 }
@@ -523,144 +524,4 @@ def callback_beli_final(call):
         f"🆔 **Order ID:** `{order_id}`\n"
         f"💵 **Harga Terpotong:** Rp {harga_final:,}\n\n"
         f"⏳ *Silakan input nomor ke aplikasi WhatsApp Anda. Klik Cek OTP jika kode belum masuk:*",
-        reply_markup=markup_monitoring, parse_mode='Markdown'
-    )
-
-    threading.Thread(target=loop_pantau_otp_dinamis, args=(chat_id, order_id, phone, msg_pembelian.message_id, param_beli_ulang)).start()
-
-# ==============================================================================
-# --- 9. MONITORING OTP ---
-# ==============================================================================
-
-def loop_pantau_otp_dinamis(chat_id, order_id, phone, message_id, param_beli_ulang):
-    while True:
-        time.sleep(5)
-        if str(order_id) not in active_orders:
-            break
-
-        check = api_get(f"check.php?order_id={order_id}")
-        if not isinstance(check, dict):
-            continue
-
-        if check.get('otp'):
-            otp_code = check['otp']
-            active_orders.pop(str(order_id), None)
-            try:
-                bot.edit_message_text(
-                    chat_id=chat_id, message_id=message_id,
-                    text=f"🎉 **KODE OTP WHATSAPP BERHASIL DITERIMA!**\n\n📱 **Nomor:** `{phone}`\n🔑 **Kode OTP Anda:** `{otp_code}`",
-                    parse_mode='Markdown'
-                )
-            except:
-                pass
-            break
-
-        status_api = str(check.get('status', '')).lower()
-        if status_api in ['expired', 'canceled', 'refunded', 'timeout', 'finish_tanpa_otp']:
-            active_orders.pop(str(order_id), None)
-            cancel = api_post('cancel.php', {'order_id': order_id})
-            status_refund = cancel.get('refunded', 'Otomatis')
-            
-            markup_post = InlineKeyboardMarkup()
-            markup_post.add(InlineKeyboardButton(text="🔄 Ulangi Order", callback_data=param_beli_ulang))
-            markup_post.add(InlineKeyboardButton(text="⬅️ Menu Utama", callback_data="goto_main"))
-
-            try:
-                bot.edit_message_text(
-                    chat_id=chat_id, message_id=message_id,
-                    text=f"⚠️ **Batas Waktu Tunggu Habis!**\n❌ Nomor `{phone}` telah kedaluwarsa.\n🔄 **Status Refund Saldo:** *{status_refund}*",
-                    reply_markup=markup_post, parse_mode='Markdown'
-                )
-            except:
-                pass
-            break
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('rf_otp_'))
-def proses_refresh_otp_manual(call):
-    TRAFFIC_STATS["total_callbacks"] += 1
-    chat_id = call.message.chat.id
-    order_id = call.data.split('_')[2]
-    
-    if str(order_id) not in active_orders:
-        bot.answer_callback_query(call.id, text="Sesi order ini sudah berakhir.")
-        return
-
-    order_info = active_orders[str(order_id)]
-    phone = order_info['phone']
-    param_beli_ulang = order_info['reorder_data']
-
-    check = api_get(f"check.php?order_id={order_id}")
-    if not isinstance(check, dict):
-        bot.answer_callback_query(call.id, text="Gagal memuat data.")
-        return
-
-    if check.get('otp'):
-        otp_code = check['otp']
-        active_orders.pop(str(order_id), None)
-        bot.answer_callback_query(call.id, text="🎉 OTP Ditemukan!")
-        try:
-            bot.edit_message_text(
-                chat_id=chat_id, message_id=call.message.message_id,
-                text=f"🎉 **KODE OTP WHATSAPP BERHASIL DITERIMA!**\n\n📱 **Nomor:** `{phone}`\n🔑 **Kode OTP Anda:** `{otp_code}`",
-                parse_mode='Markdown'
-            )
-        except:
-            pass
-        return
-
-    status_api = str(check.get('status', '')).lower()
-    if status_api in ['expired', 'canceled', 'refunded', 'timeout', 'finish_tanpa_otp']:
-        active_orders.pop(str(order_id), None)
-        cancel = api_post('cancel.php', {'order_id': order_id})
-        status_refund = cancel.get('refunded', 'Otomatis')
-        
-        markup_post = InlineKeyboardMarkup()
-        markup_post.add(InlineKeyboardButton(text="🔄 Ulangi Order", callback_data=param_beli_ulang))
-        markup_post.add(InlineKeyboardButton(text="⬅️ Menu Utama", callback_data="goto_main"))
-
-        try:
-            bot.edit_message_text(
-                chat_id=chat_id, message_id=call.message.message_id,
-                text=f"⚠️ **Batas Waktu Tunggu Habis!**\n❌ Nomor `{phone}` telah kedaluwarsa.\n🔄 **Status Refund Saldo:** *{status_refund}*",
-                reply_markup=markup_post, parse_mode='Markdown'
-            )
-        except:
-            pass
-        return
-
-    bot.answer_callback_query(call.id, text="⏳ OTP belum masuk.")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('c_m_'))
-def proses_pembatalan_manual(call):
-    TRAFFIC_STATS["total_callbacks"] += 1
-    chat_id = call.message.chat.id
-    order_id = call.data.split('_')[2]
-    
-    if str(order_id) not in active_orders:
-        bot.answer_callback_query(call.id, text="Transaksi sudah selesai.")
-        return
-
-    bot.answer_callback_query(call.id, text="Memproses pembatalan...")
-    param_beli_ulang = active_orders[str(order_id)].get('reorder_data', 'main_order')
-    active_orders.pop(str(order_id), None)
-    
-    cancel = api_post('cancel.php', {'order_id': order_id})
-    status_refund = cancel.get('refunded', 'Gagal diproses')
-    
-    markup_after_cancel = InlineKeyboardMarkup()
-    markup_after_cancel.add(InlineKeyboardButton(text="🔄 Ulangi Order", callback_data=param_beli_ulang))
-    markup_after_cancel.add(InlineKeyboardButton(text="⬅️ Menu Utama", callback_data="goto_main"))
-
-    try:
-        bot.edit_message_text(
-            chat_id=chat_id, message_id=call.message.message_id,
-            text=f"🛑 **Pesanan Dibatalkan Manual**\n\n🆔 **Order ID:** `{order_id}`\n🔄 **Status Refund Saldo:** *{status_refund}*",
-            reply_markup=markup_after_cancel, parse_mode='Markdown'
-        )
-    except:
-        pass
-
-# ==============================================================================
-# --- 10. RUNNING ENGINE ---
-# ==============================================================================
-bot.infinity_polling()
+        reply_markup=markup_monitoring, parse_mode='Markdown
